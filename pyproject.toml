@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "syntheticcfo"
+version = "0.2.1"
+description = "Python client for synthetic cfo: forensic-grade synthetic ERP data (SAP ECC, SAP S/4HANA, Oracle Cloud) with a labelled fraud answer key."
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "Proprietary" }
+authors = [{ name = "synthetic cfo" }]
+keywords = ["synthetic data", "erp", "sap", "oracle", "fraud detection", "audit", "benchmark"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Programming Language :: Python :: 3",
+    "Topic :: Office/Business :: Financial :: Accounting",
+]
+
+[project.scripts]
+syntheticcfo = "syntheticcfo:main"
+
+[project.urls]
+Homepage = "https://app.syntheticcfo.com"
+Documentation = "https://app.syntheticcfo.com/evaluate"
+Source = "https://github.com/syntheticcfo/syntheticcfo"
+Proof = "https://app.syntheticcfo.com/proof"
+
+[tool.setuptools]
+py-modules = ["syntheticcfo"]

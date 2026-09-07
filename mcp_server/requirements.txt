@@ -1,0 +1,4 @@
+# synthetic cfo MCP server (stdio). Installed on top of the repo's requirements.txt,
+# which provides the deterministic engine. The engine does the financial generation;
+# these are only the Model Context Protocol transport.
+mcp>=1.2,<2
