@@ -1,4 +1,4 @@
-# synthetic cfo MCP server (stdio). Installed on top of the repo's requirements.txt,
-# which provides the deterministic engine. The engine does the financial generation;
-# these are only the Model Context Protocol transport.
+# synthetic cfo MCP server (stdio): the Model Context Protocol transport. Hosted
+# mode needs only this and the client (pip install syntheticcfo); the server
+# does not start on mcp 2.x.
 mcp>=1.2,<2

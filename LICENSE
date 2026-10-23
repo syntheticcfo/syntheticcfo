@@ -20,6 +20,6 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-This licence covers the client, the command line and the MCP server in this
-repository only. The synthetic cfo platform, the datasets it generates and
-their terms of use are governed separately: https://app.syntheticcfo.com/terms
+This licence covers the synthetic cfo Python client, its command line and its
+MCP server. The synthetic cfo platform, the datasets it generates and their
+terms of use are governed separately: https://app.syntheticcfo.com/terms
