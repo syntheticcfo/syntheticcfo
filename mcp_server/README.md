@@ -9,6 +9,25 @@ on the same engine version regenerate a byte-identical package; its certificate
 names the engine, and on another engine version the same seed can build a
 different dataset.
 
+It generates data in the shape of SAP ECC, SAP S/4HANA and Oracle Cloud, plus
+the two combined environments (the SAP migration pair and the intercompany
+group) on the Team plan and above. The worked proof, three detectors scored
+against the answer key, is at
+[app.syntheticcfo.com/proof](https://app.syntheticcfo.com/proof)
+
+## Run it in a container
+
+The Dockerfile at the root of this repository builds the server and starts it
+on stdio
+
+```bash
+docker build -t syntheticcfo-mcp .
+docker run --rm -i -e SCFO_API_KEY syntheticcfo-mcp
+```
+
+Set `SCFO_API_KEY` to generate. Without it the server still starts and lists its six tools, and the tools that generate
+answer with an error asking for the key.
+
 ## Setup on any plan (three steps)
 
 The server runs against app.syntheticcfo.com with your API key, so it needs

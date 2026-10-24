@@ -1,5 +1,8 @@
 # syntheticcfo
 
+See the worked proof first, three detectors scored against the answer key, at
+[app.syntheticcfo.com/proof](https://app.syntheticcfo.com/proof)
+
 synthetic cfo generates SAP and Oracle ledgers from accounting rules, with fraud
 planted, every planted record written down at the moment it is planted, and
 innocent look-alikes beside nearly every scheme, so fraud detection can be
@@ -152,6 +155,21 @@ match is a genuine exception (https://app.syntheticcfo.com/proof).
 `mcp_server/` lets Claude, Cursor, VS Code or any MCP client generate datasets,
 download packages and read answer keys in plain language. Three-step setup in
 [mcp_server/README.md](mcp_server/README.md).
+
+It generates data in the shape of SAP ECC, SAP S/4HANA and Oracle Cloud
+(`SAP_ECC`, `SAP_S4HANA` or `ORACLE` as the `platform`), plus the SAP
+migration pair and the intercompany group on the Team plan and above.
+
+To run it in a container over stdio, build the image from the Dockerfile at
+the root of this repository and pass your key through the environment
+
+```bash
+docker build -t syntheticcfo-mcp .
+docker run --rm -i -e SCFO_API_KEY syntheticcfo-mcp
+```
+
+Without a key the server still starts and lists its six tools, and the tools
+that generate answer with an error asking for `SCFO_API_KEY`.
 
 ## Plans
 
