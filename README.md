@@ -145,10 +145,12 @@ record to report, payroll, inventory, fixed assets), ten jurisdictions, and 37
 labelled fraud schemes in the registry (35 across the seven cycles, 2 in the
 intercompany group), each world planting those its cycles, platform and
 settings allow, nearly every one beside innocent look-alikes so a detector can
-be measurably wrong. The three closed sets by design, with no look-alike
-planted, are segregation of duties, the ghost vendor and phantom inventory:
-the join or the reconciliation that finds them is the real analytic, so every
-match is a genuine exception (https://app.syntheticcfo.com/proof).
+be measurably wrong. The three closed sets by design are segregation of
+duties, the ghost vendor and phantom inventory. The join or the
+reconciliation that finds them is the real analytic, so every match is a
+genuine exception. No look-alike is planted for the first two, and beside
+phantom inventory an Oracle world carries stock that did not move, which the
+roll-forward separates (https://app.syntheticcfo.com/proof).
 
 ## MCP server
 
