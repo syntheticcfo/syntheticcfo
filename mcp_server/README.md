@@ -81,6 +81,8 @@ not just eyeball the data.
   (such as the scale it chose when no `num_rows` was given) under `warnings`.
   It takes what the app's Advanced panel sets, evaluation mode, operational
   noise, a region, a size band and a foreign-currency share included.
+  Evaluation mode is on unless `evaluation_mode` is false, which asks for the
+  annotated form (the annotations and the marker columns on the rows).
   Multi-year arcs, the blind evaluation track, the migration pair and the
   intercompany group need the Team plan or above.
 - **inspect_package** - the package's shape and legs, the one database that

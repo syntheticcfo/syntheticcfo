@@ -48,7 +48,7 @@ import urllib.error as _uerr
 import urllib.request as _ureq
 from pathlib import Path as _Path
 
-__version__ = "0.2.2"
+__version__ = "0.2.3"
 __all__ = ["Client", "Job", "SyntheticCfoError", "main"]
 
 _DEFAULT_BASE = "https://app.syntheticcfo.com"
@@ -253,12 +253,14 @@ class Client:
         evaluation_mode  withhold the ground-truth marker columns from the
                    shipped database and workbooks and move the annotation layer
                    out, so no column names a scheme on its own rows (the answer
-                   key still ships in 01_Audit_Evidence). Left out, it is on
-                   with the blind track and off otherwise
+                   key still ships in 01_Audit_Evidence). On by default, as on
+                   the platform since engine 1.15.1; evaluation_mode=False asks
+                   for the annotated form, with the annotations and the marker
+                   columns on the rows
         blind      add the blind evaluation track (Team plan and above): extra
                    schemes whose key stays sealed on the platform and is scored
-                   there; it switches evaluation_mode on unless
-                   evaluation_mode=False is given, as the platform does
+                   there; evaluation mode stays on with it unless
+                   evaluation_mode=False is given
         company_code  the SAP company code on every document (one to four
                    letters or digits; left out, the platform's default, 1000);
                    the intercompany group keeps its subsidiaries' own codes
@@ -281,12 +283,10 @@ class Client:
             "entropy_level": int(entropy),
             "blind_track": 1 if blind else 0,
             "foreign_currency_share": float(fx_share),
-            # a blind track is only honest with the marker columns withheld, so
-            # it switches evaluation mode on unless the caller said otherwise,
-            # as the app and the API do. Until 20 October 2026 the client sent
-            # True whenever blind was set, so a stored configuration with the
-            # blind track and evaluation mode off could not be asked for again.
-            "evaluation_mode": bool(blind) if evaluation_mode is None else bool(evaluation_mode),
+            # on unless the caller says otherwise, the platform's default since
+            # engine 1.15.1 (until 0.2.3 the client sent it on only with the
+            # blind track); evaluation_mode=False is the annotated form
+            "evaluation_mode": True if evaluation_mode is None else bool(evaluation_mode),
         }
         # sent only when given: the platform's own defaults apply otherwise (a
         # null would be refused, where an absent field takes the default)
@@ -666,10 +666,16 @@ def main(argv=None):
                    help="1 for a single year; 2 to 5 for a multi-year arc on the "
                         "Team plan and above (3 at most on the intercompany group; "
                         "the migration pair is one year)")
-    g.add_argument("--evaluation-mode", action="store_true", dest="evaluation_mode",
-                   help="withhold the ground-truth marker columns and move the "
-                        "annotations out of the shipped data (the answer key "
-                        "still ships)")
+    ev = g.add_mutually_exclusive_group()
+    ev.add_argument("--evaluation-mode", action="store_const", const=True, dest="evaluation_mode",
+                    default=None,
+                    help="withhold the ground-truth marker columns and move the "
+                         "annotations out of the shipped data (the answer key "
+                         "still ships). The default, so the flag changes nothing")
+    ev.add_argument("--annotated", action="store_const", const=False, dest="evaluation_mode",
+                    help="the annotated form: evaluation mode off, so the expert "
+                         "annotations and the ground-truth marker columns stay on "
+                         "the rows")
     saves(g)
 
     d = sub.add_parser("download",

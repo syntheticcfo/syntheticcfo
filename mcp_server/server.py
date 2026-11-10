@@ -77,12 +77,13 @@ _GEN_PROPS = {
     "evaluation_mode": {"type": "boolean",
                         "description": ("Withhold the ground-truth marker columns from the shipped database and "
                                         "workbooks and move the annotation layer out, so no column names a scheme "
-                                        "on its own rows (the answer key still ships). Omitted, it is on with the "
-                                        "blind track and off otherwise.")},
+                                        "on its own rows (the answer key still ships). On when omitted, the platform's "
+                                        "default since engine 1.15.1; false asks for the annotated form, with the "
+                                        "annotations and the marker columns on the rows.")},
     "blind_track": {"type": "integer", "enum": [0, 1],
                     "description": ("1 adds the blind evaluation track (Team plan and above): extra planted "
                                     "schemes whose answer key stays sealed outside the package, for the "
-                                    "platform's scoring. It switches evaluation_mode on unless that is given as "
+                                    "platform's scoring. evaluation_mode stays on with it unless that is given as "
                                     "false. Default 0.")},
     "entropy_level": {"type": "integer", "enum": [0, 1, 2, 3],
                       "description": ("Operational noise from 0 (none, the default) to 3: legitimate mess such as "

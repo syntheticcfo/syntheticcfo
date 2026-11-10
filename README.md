@@ -77,7 +77,7 @@ and `reproduce` also take `--lab` and `--out`. `generate` also takes:
 | `--jurisdiction` | a country code such as US, DE, ZA or JP (`syntheticcfo generate --help` lists them) |
 | `--seed` | any integer; the same seed and configuration on the same engine version rebuild the world byte for byte (on another engine version they can build a different dataset). Left out, a fresh one is drawn and printed at the end |
 | `--years` | 1 for a single year; 2 to 5 for a multi-year arc on the Team plan and above (3 at most on the intercompany group; the migration pair is one year) |
-| `--evaluation-mode` | withholds the ground-truth marker columns and moves the annotations out of the shipped data |
+| `--annotated` | the annotated form: evaluation mode off, so the expert annotations and the ground-truth marker columns stay on the rows. Left out, evaluation mode is on (the default since engine 1.15.1): the marker columns are withheld and the annotations move out of the shipped data. `--evaluation-mode` is still accepted and changes nothing |
 | `--lab` | also saves the JSON-lines lab export: one file per table, the answer key and the dataset card |
 | `--out` | the folder or file path for the downloads (default: where you stand) |
 
