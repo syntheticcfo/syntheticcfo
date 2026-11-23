@@ -798,7 +798,7 @@ def _statement_headline(workpaper_csv):
 # ---------------------------------------------------------------------------
 # query_answer_key
 # ---------------------------------------------------------------------------
-def query_answer_key(package_dir, module=None, control_id=None, limit=200, leg=None):
+def query_answer_key(package_dir, module=None, control_id=None, limit=200, leg=None, offset=0):
     """Return the ground-truth fraud labels as structured rows, so an agent
     building or scoring a fraud detector can grade against the truth. This is the
     thing a generic synthetic-data tool does not have.
@@ -835,12 +835,21 @@ def query_answer_key(package_dir, module=None, control_id=None, limit=200, leg=N
         rows = [r for r in rows if (r.get("control_id") or "").upper() == str(control_id).upper()]
     total = len(rows)
     lim = max(1, min(int(limit or 200), 2000))
+    try:
+        off = max(0, int(offset or 0))
+    except (TypeError, ValueError):
+        off = 0
     cols = ["module", "control_id", "fraud_vector", "source_table", "record_id", "detail"]
     for extra in ("entity", "fiscal_year", "leg"):
         if any(r.get(extra) for r in rows):
             cols.append(extra)
-    out = {"ok": True, "total_matching": total, "returned": min(total, lim),
-           "scope": scope, "labels": rows[:lim], "columns": cols}
+    page = rows[off:off + lim]
+    out = {"ok": True, "total_matching": total, "offset": off, "returned": len(page),
+           "scope": scope, "labels": page, "columns": cols}
+    # a key larger than one page is read page by page (since 1.15.2 the
+    # answer key of a large package is no longer capped at its first 2,000)
+    if off + len(page) < total:
+        out["next_offset"] = off + len(page)
     # a blind-track package: the rows above are the standard catalogue's; the
     # sealed key is named, counted and explained, and none of its rows returned
     sk = _sealed_key(pkg, leg)
@@ -853,12 +862,44 @@ def query_answer_key(package_dir, module=None, control_id=None, limit=200, leg=N
 # ---------------------------------------------------------------------------
 # read_table
 # ---------------------------------------------------------------------------
-def read_table(package_dir, table, limit=50, where=None, leg=None):
+# the comparisons read_table's filter accepts, each a parameterised SQL operator
+_WHERE_OPS = {"equals": "=", "not_equals": "<>", "lt": "<", "lte": "<=", "gt": ">", "gte": ">=",
+              "like": "LIKE", "in": "IN"}
+
+
+def _where_terms(where):
+    """The filter read_table takes, as a list of {"column", <op>: value}
+    conditions joined by AND: one condition as a dict ({"column": "KUNNR",
+    "equals": "100045"}, the form before 1.15.2) or several as a list. The ops
+    are _WHERE_OPS; "in" takes a list. Returns [(column, op, value)] or raises
+    ValueError naming what it could not read."""
+    if not where:
+        return []
+    items = where if isinstance(where, list) else [where]
+    out = []
+    for w in items:
+        if not isinstance(w, dict) or not w.get("column"):
+            raise ValueError("each condition needs a column, e.g. {\"column\": \"KUNNR\", \"equals\": \"100045\"}")
+        ops = [k for k in w if k in _WHERE_OPS]
+        if len(ops) != 1:
+            raise ValueError("each condition takes exactly one of: " + ", ".join(_WHERE_OPS))
+        v = w[ops[0]]
+        if ops[0] == "in" and not (isinstance(v, list) and v and len(v) <= 1000):
+            raise ValueError("\"in\" takes a list of 1 to 1,000 values")
+        out.append((str(w["column"]), ops[0], v))
+    return out
+
+
+def read_table(package_dir, table, limit=50, where=None, leg=None, offset=0):
     """Read rows from a named table in the generated database, so the caller can
-    actually use the data inline. `where` is an optional safe-ish filter on a
-    single column: {"column": "...", "equals": "..."}. The database is the one
-    engine.layout picks for the package (a merged one on an arc or a group);
-    `leg` names a leg of a multi-leg package to read that leg's own database."""
+    actually use the data inline. `where` is an optional filter: one condition
+    {"column": "...", "equals": "..."} or a list of them joined by AND, each
+    with one comparison of _WHERE_OPS (equals, not_equals, lt, lte, gt, gte,
+    like, in). total_rows counts the rows the filter matches (table_rows the
+    whole table), and `offset` pages through them in the table's own row
+    order. The database is the one engine.layout picks for the package (a
+    merged one on an arc or a group); `leg` names a leg of a multi-leg
+    package to read that leg's own database."""
     L = _layout()
     pkg = package_dir or ""
     if not pkg or not os.path.isdir(pkg):
@@ -886,25 +927,46 @@ def read_table(package_dir, table, limit=50, where=None, leg=None):
             out["available_legs"] = legs
         return out
     lim = max(1, min(int(limit or 50), 500))
-    sql = f'SELECT * FROM "{table}"'
-    args = []
-    if isinstance(where, dict) and where.get("column"):
-        col = str(where["column"])
-        cols = {r[1] for r in con.execute(f'PRAGMA table_info("{table}")')}
+    try:
+        off = max(0, int(offset or 0))
+    except (TypeError, ValueError):
+        off = 0
+    try:
+        terms = _where_terms(where)
+    except ValueError as e:
+        con.close()
+        return {"ok": False, "error": "where: " + str(e)}
+    cols = {r[1] for r in con.execute(f'PRAGMA table_info("{table}")')}
+    clauses, args = [], []
+    for col, op, v in terms:
         if col not in cols:
             con.close()
             return {"ok": False, "error": "unknown column %r" % col,
                     "columns": sorted(cols)}
-        sql += f' WHERE "{col}" = ?'
-        args.append(where.get("equals"))
-    sql += f" LIMIT {lim}"
-    out = [dict(r) for r in con.execute(sql, args)]
-    total = con.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
+        if op == "in":
+            clauses.append(f'"{col}" IN ({", ".join("?" * len(v))})')
+            args.extend(v)
+        else:
+            clauses.append(f'"{col}" {_WHERE_OPS[op]} ?')
+            args.append(v)
+    cond = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+    sql = f'SELECT * FROM "{table}"{cond} ORDER BY rowid LIMIT {lim} OFFSET {off}'
+    try:
+        out = [dict(r) for r in con.execute(sql, args)]
+    except sqlite3.OperationalError:
+        # a view has no rowid: its own order
+        out = [dict(r) for r in con.execute(f'SELECT * FROM "{table}"{cond} LIMIT {lim} OFFSET {off}', args)]
+    matching = con.execute(f'SELECT COUNT(*) FROM "{table}"{cond}', args).fetchone()[0]
+    table_rows = con.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0] if clauses else matching
     con.close()
-    return {"ok": True, "table": table, "database": _rel(db, pkg),
-            "database_scope": ("the %s leg's own database" % str(leg).strip().upper()) if leg
-                              else _DB_SCOPE.get(L.shape(pkg), ""),
-            "total_rows": total, "returned": len(out), "rows": out}
+    res = {"ok": True, "table": table, "database": _rel(db, pkg),
+           "database_scope": ("the %s leg's own database" % str(leg).strip().upper()) if leg
+                             else _DB_SCOPE.get(L.shape(pkg), ""),
+           "total_rows": matching, "table_rows": table_rows, "offset": off,
+           "returned": len(out), "rows": out}
+    if off + len(out) < matching:
+        res["next_offset"] = off + len(out)
+    return res
 
 
 # ---------------------------------------------------------------------------

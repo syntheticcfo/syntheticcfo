@@ -61,7 +61,9 @@ _GEN_PROPS = {
                   "description": ("The company's size band, which sets its headcount and the size of its "
                                   "vendor and customer masters. Omit it to have the size inferred from the "
                                   "scale.")},
-    "fiscal_year": {"type": "integer", "description": "Fiscal year, 2023 to 2028. Default 2025."},
+    "fiscal_year": {"type": "integer", "description": ("Fiscal year, 2023 to 2028. Default 2025. With num_years "
+                                                       "above 1 it is the LAST year of the arc: num_years 3 and "
+                                                       "fiscal_year 2023 build FY2021, FY2022 and FY2023.")},
     "num_years": {"type": "integer",
                   "description": ("1 for a single year; 2 to 5 for a multi-year fraud arc of consecutive years "
                                   "(Team plan and above; 3 at most on the intercompany group, one year on the "
@@ -107,6 +109,11 @@ _PACKAGE_DIR = {"type": "string", "description": "The package_dir returned by ge
 _JOB_ID = {"type": "string",
            "description": ("The job_id returned by generate_dataset or reproduce: one of the signed-in "
                            "account's own datasets.")}
+# one condition of read_table's filter (mcp_server/tools._WHERE_OPS)
+_WHERE_COND = {"type": "object", "properties": {
+    "column": {"type": "string"}, "equals": {}, "not_equals": {}, "lt": {}, "lte": {}, "gt": {}, "gte": {},
+    "like": {"type": "string"}, "in": {"type": "array", "maxItems": 1000}},
+    "required": ["column"], "additionalProperties": False}
 _LEG = {"type": "string",
         "description": ("Optional: a leg of a multi-leg package (inspect_package lists them, e.g. "
                         "SAP_ECC / SAP_S4HANA on a migration pair).")}
@@ -200,7 +207,9 @@ def tool_definitions(remote=False):
                 key: key_schema,
                 "module": {"type": "string", "description": "Optional filter, e.g. P2P, O2C, HR, MM, FA."},
                 "control_id": {"type": "string", "description": "Optional filter, e.g. C-01, C-TAX-01."},
-                "limit": {"type": "integer", "description": "Max rows to return (default 200, max 2000)."},
+                "limit": {"type": "integer", "description": "Max rows to return (default 200, max 2000 a page)."},
+                "offset": {"type": "integer", "description": ("Rows to skip, for the next page: the answer "
+                                                              "carries next_offset while rows remain.")},
                 "leg": dict(_LEG, description=_LEG["description"] + (
                     " Reads that leg's own key; a pair returns both legs' rows, tagged with their leg, "
                     "when no leg is named."))},
@@ -213,15 +222,18 @@ def tool_definitions(remote=False):
         {
             "name": "read_table",
             "title": "Read a table",
-            "description": ("Read rows from a named table in a generated package's database. Supports an "
-                            "optional single-column equality filter via where: "
-                            "{\"column\": \"...\", \"equals\": \"...\"}."),
+            "description": ("Read rows from a named table in a generated package's database. An optional "
+                            "filter via where: one condition {\"column\": \"...\", \"equals\": \"...\"} or "
+                            "a list of them joined by AND, each with one of equals, not_equals, lt, lte, gt, "
+                            "gte, like or in (a list). total_rows counts the rows the filter matches and "
+                            "table_rows the whole table; offset pages through them (next_offset while "
+                            "rows remain)."),
             "inputSchema": {"type": "object", "properties": {
                 key: key_schema,
                 "table": {"type": "string", "description": "Table name (inspect_package lists them)."},
-                "limit": {"type": "integer", "description": "Max rows (default 50, max 500)."},
-                "where": {"type": "object", "properties": {
-                    "column": {"type": "string"}, "equals": {}}, "additionalProperties": False},
+                "limit": {"type": "integer", "description": "Max rows (default 50, max 500 a page)."},
+                "offset": {"type": "integer", "description": "Rows to skip, for the next page."},
+                "where": {"anyOf": [_WHERE_COND, {"type": "array", "items": _WHERE_COND, "maxItems": 20}]},
                 "leg": dict(_LEG, description=_LEG["description"] + (
                     " Reads that leg's own database instead of the package's representative one."))},
                 "required": [key, "table"], "additionalProperties": False},

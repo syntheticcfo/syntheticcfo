@@ -40,9 +40,11 @@ _DISPATCH = {
     "generate_dataset": lambda a: tools.generate_dataset(a),
     "inspect_package": lambda a: tools.inspect_package(a.get("package_dir")),
     "query_answer_key": lambda a: tools.query_answer_key(
-        a.get("package_dir"), a.get("module"), a.get("control_id"), a.get("limit", 200), a.get("leg")),
+        a.get("package_dir"), a.get("module"), a.get("control_id"), a.get("limit", 200), a.get("leg"),
+        a.get("offset", 0)),
     "read_table": lambda a: tools.read_table(
-        a.get("package_dir"), a.get("table"), a.get("limit", 50), a.get("where"), a.get("leg")),
+        a.get("package_dir"), a.get("table"), a.get("limit", 50), a.get("where"), a.get("leg"),
+        a.get("offset", 0)),
     "reproduce": lambda a: tools.reproduce(a.get("config"), a.get("seed"), a.get("job_id")),
     "get_deliverable": lambda a: tools.get_deliverable(
         a.get("package_dir"), a.get("kind"), a.get("workbook"), a.get("sheet"), a.get("module"),
