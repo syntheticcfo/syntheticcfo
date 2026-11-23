@@ -980,11 +980,13 @@ def certificate_summary(pkg):
 # serves a person who wants to read what the package says: the executive brief,
 # the forensic audit report, the financial statements, the control results, one
 # sheet of a source workbook. Everything is read from files the package already
-# holds, at request time, and nothing is written; a PDF is returned as its
-# extracted text, never as bytes. Only the package's standard folders are read,
-# and only files a listing of them names, so neither the sealed key
-# (job_dir/_sealed/) nor the facts sidecar is ever reachable from here.
-TEXT_CAP = 20000          # characters of text per answer; ask with offset for more
+# holds, at request time, and nothing is written; a PDF is returned as a preview
+# of its extracted text, and every answer names the real files behind it
+# ("files": name, path inside the package, type and size), which the hosted
+# connector turns into short-lived download links. Only the package's standard
+# folders are read, and only files a listing of them names, so neither the
+# sealed key (job_dir/_sealed/) nor the facts sidecar is ever reachable here.
+TEXT_CAP = 20000          # characters of text per answer at most; ask with offset for more
 TABLE_DEFAULT = 50
 TABLE_MAX = 200
 CELL_CAP = 500            # characters per table cell
@@ -1004,13 +1006,45 @@ _DELIVERABLE_FILES = {
     "control_results": ("Control results (the SOX control matrix)", _EVIDENCE, "SOX_Control_Matrix.csv"),
     "tax_filing": ("Tax filing summary, by period", _EVIDENCE, "Tax_Filing_Summary.csv"),
 }
+# files that go with a document: downloaded beside it, never read into the reply
+_COMPANION_FILES = {
+    "brief": ((_BRIEF, "Reproducibility_Certificate.txt"),),
+    "financial_statements": ((_EVIDENCE, "Statement_Workpaper.csv"),),
+}
 DELIVERABLE_KINDS = ("list", "brief", "audit_report", "answer_key_summary", "financial_statements",
-                     "control_results", "tax_filing", "realism_report", "manifest", "certificate", "workbook")
+                     "control_results", "tax_filing", "realism_report", "manifest", "certificate", "workbook",
+                     "archive_brief")
+_WHAT = {"financial_statements": "financial statements", "audit_report": "forensic audit report",
+         "brief": "executive brief", "control_results": "control matrix", "tax_filing": "tax filing",
+         "realism_report": "realism report", "certificate": "reproducibility certificate",
+         "answer_key_summary": "answer key", "manifest": "module manifests", "workbook": "source workbooks",
+         "archive_brief": "archive brief (a single world has none; its story is in the executive brief)"}
+FILE_TYPES = {".pdf": "application/pdf", ".csv": "text/csv", ".txt": "text/plain",
+              ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}
 
 
 def _dv_err(msg, **extra):
     out = {"ok": False, "error": msg}
     out.update(extra)
+    return out
+
+
+def _file_entry(pkg, path):
+    """What a client needs to offer a file: its name, its path inside the
+    package, its type and its size. None when it is not a file we serve."""
+    ext = os.path.splitext(path)[1].lower()
+    if ext not in FILE_TYPES or not os.path.isfile(path):
+        return None
+    return {"name": os.path.basename(path), "path": _rel(path, pkg), "type": FILE_TYPES[ext],
+            "size_bytes": os.path.getsize(path)}
+
+
+def _files(pkg, *paths):
+    out = []
+    for p in paths:
+        e = _file_entry(pkg, p) if p else None
+        if e and e not in out:
+            out.append(e)
     return out
 
 
@@ -1045,19 +1079,46 @@ def _pdf_text(path):
     return text, None
 
 
+# where a part may end, best first: before a page, a section heading, a blank
+# line, a line end, a sentence end. A cut is taken only in the window's second
+# half, so a part is never shorter than half the cap.
+_BREAKS = ("\n[page ", "\n\n[", "\n\n", "\n", ". ", "; ", ", ", " ")
+
+
+def _cut(text, start, cap):
+    end = start + cap
+    if end >= len(text):
+        return len(text)
+    window = text[start:end]
+    floor = cap // 2
+    for mark in _BREAKS:
+        i = window.rfind(mark)
+        if i >= floor:
+            # the line ends close this part; a page or heading mark starts the
+            # next one; a sentence or clause mark stays with the part it ends
+            lead = len(mark) - len(mark.lstrip("\n"))
+            return start + i + (lead if lead else len(mark))
+    return end
+
+
 def _cap_text(text, offset):
     try:
         offset = max(0, int(offset or 0))
     except (TypeError, ValueError):
         offset = 0
     total = len(text)
-    chunk = text[offset:offset + TEXT_CAP]
+    offset = min(offset, total)
+    end = _cut(text, offset, TEXT_CAP)
+    chunk = text[offset:end]
     out = {"format": "text", "text": chunk, "total_chars": total, "offset": offset,
-           "returned_chars": len(chunk), "truncated": offset + len(chunk) < total}
+           "returned_chars": len(chunk), "truncated": end < total}
     if out["truncated"]:
-        out["next_offset"] = offset + len(chunk)
-        out["truncated_note"] = ("Truncated at %d characters: ask again with offset %d for the next part, or "
-                                 "open the package." % (TEXT_CAP, offset + len(chunk)))
+        out["next_offset"] = end
+        out["truncated_note"] = ("This is characters %d to %d of %d, cut at a paragraph or sentence. For the "
+                                 "next part, ask again with offset %d; or download the file."
+                                 % (offset + 1, end, total, end))
+    elif offset:
+        out["final_note"] = "This is the last part (characters %d to %d of %d)." % (offset + 1, end, total)
     return out
 
 
@@ -1105,17 +1166,6 @@ def _csv_table(path, limit, offset):
         return _table(header, rd, limit, offset)
 
 
-def _deliverable_dir(pkg, leg):
-    """The folder whose documents are read: a named leg, else the package itself.
-    (dir, None) or (None, error payload)."""
-    if leg:
-        d = _leg_dir(pkg, leg)
-        if not d:
-            return None, _dv_err("unknown leg %r" % leg, available_legs=[l for l, _d in _legs(pkg)])
-        return d, None
-    return pkg, None
-
-
 def _workbooks(d):
     src = os.path.join(d, _SOURCE)
     if not os.path.isdir(src):
@@ -1133,20 +1183,40 @@ def _manifests(d):
                   if f.startswith("Manifest_") and f.endswith(".pdf"))
 
 
-def _list_deliverables(pkg, d, leg):
+def _archive_cert(pkg):
+    try:
+        return _layout().archive_certificate(pkg)
+    except Exception:
+        return None
+
+
+def _archive_brief(pkg):
+    try:
+        return _layout().archive_brief(pkg)
+    except Exception:
+        return None
+
+
+def _level_docs(pkg, d, leg_label):
+    """The documents at one level (the package root, or one leg), each with
+    its files."""
     docs = []
+    tag = {"leg": leg_label} if leg_label else {}
     for kind, (title, folder, name) in _DELIVERABLE_FILES.items():
-        if os.path.isfile(os.path.join(d, folder, name)):
-            docs.append({"kind": kind, "title": title, "file": "%s/%s" % (folder, name)})
-    if _labels().answer_key_files(d):
-        docs.append({"kind": "answer_key_summary", "title": "Answer-key summary (labelled records by module, "
-                     "control and vector)", "file": "%s/Ground_Truth_Labels.csv" % _EVIDENCE})
+        p = os.path.join(d, folder, name)
+        if os.path.isfile(p):
+            comp = [os.path.join(d, f, n) for f, n in _COMPANION_FILES.get(kind, ())]
+            docs.append(dict(tag, kind=kind, title=title, files=_files(pkg, p, *comp)))
+    keys = _labels().answer_key_files(d) if (leg_label or not _legs(pkg)) else []
+    if keys:
+        docs.append(dict(tag, kind="answer_key_summary", title="Answer-key summary (labelled records by "
+                         "module, control and vector)", files=_files(pkg, *keys)))
     for m in _manifests(d):
-        docs.append({"kind": "manifest", "module": m, "title": "Module manifest, %s" % m,
-                     "file": "%s/Manifest_%s.pdf" % (_EVIDENCE, m)})
+        docs.append(dict(tag, kind="manifest", module=m, title="Module manifest, %s" % m,
+                         files=_files(pkg, os.path.join(d, _EVIDENCE, "Manifest_%s.pdf" % m))))
     for wb in _workbooks(d):
-        entry = {"kind": "workbook", "workbook": wb, "title": "Source workbook %s" % wb,
-                 "file": "%s/%s" % (_SOURCE, wb)}
+        entry = dict(tag, kind="workbook", workbook=wb, title="Source workbook %s" % wb,
+                     files=_files(pkg, os.path.join(d, _SOURCE, wb)))
         if wb.lower().endswith(".xlsx"):
             try:
                 from openpyxl import load_workbook
@@ -1156,120 +1226,254 @@ def _list_deliverables(pkg, d, leg):
             except Exception:
                 pass
         docs.append(entry)
+    return docs
+
+
+def _root_docs(pkg):
+    """The documents a multi-leg package keeps at its root."""
+    docs = []
+    cert = _archive_cert(pkg)
+    if cert:
+        docs.append({"kind": "certificate", "title": "Archive reproducibility certificate (every leg)",
+                     "files": _files(pkg, cert)})
+    brief = _archive_brief(pkg)
+    if brief:
+        docs.append({"kind": "archive_brief", "title": "Archive brief (%s)" % os.path.basename(brief),
+                     "files": _files(pkg, brief)})
+    keys = _labels().answer_key_files(pkg)
+    if keys:
+        docs.append({"kind": "answer_key_summary", "title": "Answer-key summary of the whole archive",
+                     "files": _files(pkg, *keys)})
+    return docs
+
+
+def _all_docs(pkg, leg):
+    """Every document the request can reach: one leg's when leg is named; else
+    the root's and every leg's, each leg's tagged with its label."""
+    if leg:
+        d = _leg_dir(pkg, leg)
+        return _level_docs(pkg, d, str(leg).strip().upper()) if d else []
+    legs = _legs(pkg)
+    if not legs:
+        return _level_docs(pkg, pkg, None)
+    docs = _root_docs(pkg) + _level_docs(pkg, pkg, None)
+    for label, d in legs:
+        docs.extend(_level_docs(pkg, d, label))
+    return docs
+
+
+def _available(pkg, leg):
+    """The documents there are, each as the arguments that read it."""
+    out = []
+    for doc in _all_docs(pkg, leg):
+        a = {"kind": doc["kind"]}
+        for k in ("workbook", "module", "leg"):
+            if doc.get(k):
+                a[k] = doc[k]
+        if a not in out:
+            out.append(a)
+    return out
+
+
+def _args_text(a):
+    return ", ".join("%s=%s" % (k, a[k]) for k in ("kind", "workbook", "module", "leg") if a.get(k))
+
+
+def _missing(pkg, leg, what):
+    av = _available(pkg, leg)
+    msg = "This package has no %s%s." % (what, " in leg %s" % str(leg).strip().upper() if leg else "")
+    if av:
+        msg += " Available: %s." % "; ".join(_args_text(a) for a in av)
+    else:
+        msg += " It holds no readable document."
+    return _dv_err(msg, available=av)
+
+
+def _list_deliverables(pkg, leg):
+    docs = _all_docs(pkg, leg)
     out = {"ok": True, "kind": "list", "documents": docs}
     legs = [label for label, _d in _legs(pkg)]
     if legs and not leg:
         out["legs"] = legs
-        out["legs_note"] = ("This package has legs; most documents sit in each leg. Name one with leg to "
-                            "list and read its documents.")
+        out["legs_note"] = ("This package has legs: %s. The documents of each are listed with their leg; name "
+                            "one with leg to read it. With no leg, a document is read from the package root if "
+                            "it is there, else from the last leg, %s." % (", ".join(legs), legs[-1]))
+    if leg and not _leg_dir(pkg, leg):
+        return _dv_err("unknown leg %r" % leg, available_legs=legs)
     if not docs:
-        out["note"] = "No readable document sits at this level of the package."
+        out["note"] = "No readable document sits in this package."
     return out
+
+
+def _locate(pkg, leg, has):
+    """Where a document is read from: (dir, leg label or None, note) or None.
+    A named leg is read from that leg. Otherwise the package root, then the
+    legs from the last back, the first that has it (has(dir) says)."""
+    if leg:
+        d = _leg_dir(pkg, leg)
+        return (d, str(leg).strip().upper(), None) if d and has(d) else None
+    legs = _legs(pkg)
+    if has(pkg):
+        return pkg, None, None
+    for label, d in reversed(legs):
+        if has(d):
+            others = [l for l, _d in legs if l != label]
+            note = ("Read from leg %s, the last of this package's legs that has it. The other legs: %s; name "
+                    "one with leg." % (label, ", ".join(others))) if others else None
+            return d, label, note
+    return None
 
 
 def get_deliverable(package_dir, kind=None, workbook=None, sheet=None, module=None, limit=None,
                     offset=None, leg=None):
-    """One of the package's documents as text or a table, for reading in the
-    chat. kind 'list' (the default) says which documents this package holds."""
+    """One of the package's documents: a preview of its text, or a table, with
+    the files it comes from. kind 'list' (the default) says which documents
+    this package holds."""
     pkg = package_dir or ""
     if not pkg or not os.path.isdir(pkg):
         return _dv_err("package_dir not found: %r" % package_dir)
     kind = (kind or "list").strip().lower()
+    if leg and not _leg_dir(pkg, leg):
+        return _dv_err("unknown leg %r" % leg, available_legs=[l for l, _d in _legs(pkg)])
     if kind not in DELIVERABLE_KINDS:
-        return _dv_err("unknown kind %r" % kind, kinds=list(DELIVERABLE_KINDS))
-    d, err = _deliverable_dir(pkg, leg)
-    if err:
-        return err
+        av = _available(pkg, leg)
+        return _dv_err("unknown kind %r. Available here: %s." % (kind, "; ".join(_args_text(a) for a in av)
+                                                                  or "nothing"),
+                       kinds=list(DELIVERABLE_KINDS), available=av)
     if kind == "list":
-        return _list_deliverables(pkg, d, leg)
-    base = {"ok": True, "kind": kind}
-    if leg:
-        base["leg"] = str(leg).strip().upper()
-    legs_hint = ({"available_legs": [l for l, _d in _legs(pkg)]} if not leg and _legs(pkg) else {})
+        return _list_deliverables(pkg, leg)
+    multi = bool(_legs(pkg))
+
+    def done(base, d, label, note):
+        if label:
+            base["leg"] = label
+        if note:
+            base["leg_note"] = note
+        return base
+
+    if kind == "archive_brief":
+        p = _archive_brief(pkg) if not leg else None
+        if not p:
+            return _missing(pkg, leg, _WHAT[kind])
+        base = {"ok": True, "kind": kind, "title": "Archive brief", "source": _rel(p, pkg),
+                "files": _files(pkg, p)}
+        base.update(_cap_text(open(p, encoding="utf-8").read(), offset))
+        return base
 
     if kind == "answer_key_summary":
+        if multi and not leg:
+            d, label, note = pkg, None, None
+        else:
+            loc = _locate(pkg, leg, lambda x: bool(_labels().answer_key_files(x)))
+            if loc is None:
+                return _missing(pkg, leg, _WHAT[kind])
+            d, label, note = loc
         ak = _answer_key_summary(d)
         if ak is None:
-            return _dv_err("this package has no answer key here", **legs_hint)
-        base.update({"title": "Answer-key summary", "source": "%s/Ground_Truth_Labels.csv" % _EVIDENCE,
-                     "format": "summary", "summary": ak})
+            return _missing(pkg, leg, _WHAT[kind])
+        keys = _labels().answer_key_files(d)
+        base = {"ok": True, "kind": kind, "title": "Answer-key summary" + (" of the whole archive"
+                                                                         if multi and not leg else ""),
+                "source": _rel(keys[0], pkg) if keys else "%s/Ground_Truth_Labels.csv" % _EVIDENCE,
+                "format": "summary", "summary": ak, "files": _files(pkg, *keys)}
         sk = _sealed_key(d, None)
         if sk:
             base["sealed_key"] = {k: sk[k] for k in ("exists", "held", "scoring") if k in sk}
+        return done(base, d, label, note)
+
+    if kind == "certificate" and multi and not leg and _archive_cert(pkg):
+        p = _archive_cert(pkg)
+        base = {"ok": True, "kind": kind, "title": "Archive reproducibility certificate (every leg)",
+                "source": _rel(p, pkg), "files": _files(pkg, p),
+                "leg_note": ("The archive's own certificate, at the package root. Each leg's certificate: name "
+                             "the leg (%s)." % ", ".join(l for l, _d in _legs(pkg)))}
+        base.update(_cap_text(open(p, encoding="utf-8").read(), offset))
         return base
 
     if kind == "workbook":
+        loc = _locate(pkg, leg, lambda x: bool(_workbooks(x)))
+        if loc is None:
+            return _missing(pkg, leg, _WHAT[kind])
+        d, label, note = loc
         books = _workbooks(d)
-        if not books:
-            return _dv_err("this package has no source workbooks here", **legs_hint)
         if not workbook:
-            return _dv_err("name the workbook (one of those listed)", workbooks=books)
+            return done(_dv_err("Name the workbook: one of %s." % ", ".join(books), workbooks=books), d, label,
+                        note)
         if workbook not in books:
-            return _dv_err("no such workbook %r" % workbook, workbooks=books)
+            return done(_dv_err("No such workbook %r. The workbooks: %s." % (workbook, ", ".join(books)),
+                                workbooks=books), d, label, note)
         path = os.path.join(d, _SOURCE, workbook)
-        base.update({"title": "Source workbook %s" % workbook, "source": "%s/%s" % (_SOURCE, workbook)})
+        base = {"ok": True, "kind": kind, "title": "Source workbook %s" % workbook,
+                "source": _rel(path, pkg), "files": _files(pkg, path)}
         if workbook.lower().endswith(".csv"):
             base.update(_csv_table(path, limit, offset))
-            return base
+            return done(base, d, label, note)
         from openpyxl import load_workbook
         w = load_workbook(path, read_only=True, data_only=True)
         try:
             names = list(w.sheetnames)
             if not sheet:
-                return _dv_err("name the sheet", workbook=workbook, sheets=names)
+                return done(_dv_err("Name the sheet: one of %s." % ", ".join(names), workbook=workbook,
+                                    sheets=names, files=base["files"]), d, label, note)
             if sheet not in names:
-                return _dv_err("no such sheet %r in %s" % (sheet, workbook), sheets=names)
+                return done(_dv_err("No such sheet %r in %s. The sheets: %s." % (sheet, workbook,
+                                                                               ", ".join(names)),
+                                    sheets=names, files=base["files"]), d, label, note)
             it = w[sheet].iter_rows(values_only=True)
             header = next(it, ()) or ()
             base["sheet"] = sheet
             base.update(_table(header, it, limit, offset))
         finally:
             w.close()
-        return base
+        return done(base, d, label, note)
 
     if kind == "manifest":
+        loc = _locate(pkg, leg, lambda x: bool(_manifests(x)))
+        if loc is None:
+            return _missing(pkg, leg, _WHAT[kind])
+        d, label, note = loc
         mods = _manifests(d)
-        if not mods:
-            return _dv_err("this package has no module manifests here", **legs_hint)
         if not module:
-            return _dv_err("name the module", modules=mods)
+            return done(_dv_err("Name the module: one of %s." % ", ".join(mods), modules=mods), d, label, note)
         m = str(module).strip().upper()
         if m not in mods:
-            return _dv_err("no manifest for module %r" % module, modules=mods)
-        rel = "%s/Manifest_%s.pdf" % (_EVIDENCE, m)
-        text, why = _pdf_text(os.path.join(d, rel))
+            return done(_dv_err("No manifest for module %r. The modules: %s." % (module, ", ".join(mods)),
+                                modules=mods), d, label, note)
+        path = os.path.join(d, _EVIDENCE, "Manifest_%s.pdf" % m)
+        text, why = _pdf_text(path)
         if text is None:
-            return _dv_err("%s: %s" % (rel, why))
-        base.update({"title": "Module manifest, %s" % m, "source": rel})
+            return _dv_err("%s: %s" % (_rel(path, pkg), why), files=_files(pkg, path))
+        base = {"ok": True, "kind": kind, "title": "Module manifest, %s" % m, "source": _rel(path, pkg),
+                "files": _files(pkg, path)}
         base.update(_cap_text(text, offset))
-        return base
+        return done(base, d, label, note)
 
     title, folder, name = _DELIVERABLE_FILES[kind]
-    rel = "%s/%s" % (folder, name)
+    loc = _locate(pkg, leg, lambda x: os.path.isfile(os.path.join(x, folder, name)))
+    if loc is None:
+        return _missing(pkg, leg, _WHAT[kind])
+    d, label, note = loc
     path = os.path.join(d, folder, name)
-    if not os.path.isfile(path):
-        what = {"financial_statements": "financial statements", "audit_report": "forensic audit report",
-                "brief": "executive brief", "control_results": "control matrix", "tax_filing": "tax filing",
-                "realism_report": "realism report", "certificate": "reproducibility certificate"}[kind]
-        return _dv_err("this package has no %s here" % what, **legs_hint)
-    base.update({"title": title, "source": rel})
+    comp = [os.path.join(d, f, n) for f, n in _COMPANION_FILES.get(kind, ())]
+    base = {"ok": True, "kind": kind, "title": title, "source": _rel(path, pkg),
+            "files": _files(pkg, path, *comp)}
     if name.endswith(".csv"):
         base.update(_csv_table(path, limit, offset))
         if kind == "control_results":
             base["source_note"] = ("Read from the package's SOX control matrix (one row per control, with its "
                                    "status and exception count).")
-        return base
+        return done(base, d, label, note)
     if name.endswith(".txt"):
         base.update(_cap_text(open(path, encoding="utf-8").read(), offset))
-        return base
+        return done(base, d, label, note)
     text, why = _pdf_text(path)
     if text is None:
-        return _dv_err("%s: %s" % (rel, why))
+        return _dv_err("%s: %s" % (_rel(path, pkg), why), files=base["files"])
     if kind == "brief":
         cert = os.path.join(d, _BRIEF, "Reproducibility_Certificate.txt")
         if os.path.isfile(cert):
             text += "\n\n[Reproducibility_Certificate.txt]\n" + open(cert, encoding="utf-8").read()
-            base["sources"] = [rel, "%s/Reproducibility_Certificate.txt" % _BRIEF]
+            base["sources"] = [_rel(path, pkg), _rel(cert, pkg)]
     base.update(_cap_text(text, offset))
     if kind == "audit_report":
         ak = _answer_key_summary(d)
@@ -1277,47 +1481,116 @@ def get_deliverable(package_dir, kind=None, workbook=None, sheet=None, module=No
             base["answer_key_summary"] = ak
     if kind == "financial_statements":
         wp = os.path.join(d, _EVIDENCE, "Statement_Workpaper.csv")
-        if os.path.isfile(wp):
+        if os.path.isfile(wp) and not offset:
             t = _csv_table(wp, limit, None)
-            base["workpaper"] = dict(t, source="%s/Statement_Workpaper.csv" % _EVIDENCE)
-    return base
+            base["workpaper"] = dict(t, source=_rel(wp, pkg))
+    return done(base, d, label, note)
+
+
+# The parts of a payload that are the document itself. In a tool result they
+# appear once, in the readable text block; the structured result carries the
+# rest (title, paging, files and links), so no client is sent the text twice.
+_BODY_KEYS = ("text", "rows", "columns", "summary", "workpaper", "answer_key_summary")
+
+
+def deliverable_meta(payload):
+    """The payload without the document's body: what the structured result of
+    a get_deliverable call carries."""
+    if not isinstance(payload, dict):
+        return payload
+    out = {k: v for k, v in payload.items() if k not in _BODY_KEYS}
+    if any(k in payload for k in _BODY_KEYS):
+        out["body"] = "in the text content of this result"
+    return out
+
+
+def _size(n):
+    n = int(n or 0)
+    if n < 1024:
+        return "%d bytes" % n
+    if n < 1024 * 1024:
+        return "%.0f KB" % (n / 1024.0)
+    return "%.1f MB" % (n / (1024.0 * 1024.0))
+
+
+def _file_lines(files):
+    out = []
+    for f in files or []:
+        line = "- %s (%s, %s)" % (f.get("name"), f.get("type"), _size(f.get("size_bytes")))
+        if f.get("url"):
+            line += ": %s" % f["url"]
+        elif f.get("local_path"):
+            line += ": %s" % f["local_path"]
+        else:
+            line += ": %s in the package" % f.get("path")
+        out.append(line)
+    return out
 
 
 def deliverable_text(payload):
     """A deliverable as readable text: the document, or a table in Markdown, with
-    its title and source. What a host that shows only text puts on the screen."""
+    its title, its files and how to get more. The one place a get_deliverable
+    result carries the document's words."""
     if not isinstance(payload, dict):
         return str(payload)
     if not payload.get("ok"):
-        return "Could not read the deliverable: %s" % payload.get("error", "")
+        lines = ["Could not read the deliverable: %s" % payload.get("error", "")]
+        if payload.get("files"):
+            lines.append("")
+            lines.append("The file:")
+            lines.extend(_file_lines(payload["files"]))
+        if payload.get("open_in_app"):
+            lines.append("")
+            lines.append("Open the package in the app: %s" % payload["open_in_app"])
+        return "\n".join(lines)
     lines = []
     if payload.get("kind") == "list":
         lines.append("Documents in this package:")
         for doc in payload.get("documents") or []:
-            extra = " (workbook=%s)" % doc["workbook"] if doc.get("workbook") else (
-                " (module=%s)" % doc["module"] if doc.get("module") else "")
-            lines.append("- %s: kind=%s%s" % (doc["title"], doc["kind"], extra))
-        if payload.get("legs"):
-            lines.append("Legs: %s. %s" % (", ".join(payload["legs"]), payload.get("legs_note", "")))
+            extra = ", ".join("%s=%s" % (k, doc[k]) for k in ("workbook", "module", "leg") if doc.get(k))
+            lines.append("- %s: kind=%s%s" % (doc["title"], doc["kind"], (", " + extra) if extra else ""))
+            for fl in _file_lines(doc.get("files")):
+                lines.append("  " + fl)
+        if payload.get("legs_note"):
+            lines.append("")
+            lines.append(payload["legs_note"])
     else:
         lines.append("# %s" % payload.get("title", payload.get("kind")))
-        if payload.get("source"):
-            lines.append("Source: %s" % payload["source"])
+        if payload.get("leg"):
+            lines.append("Leg: %s" % payload["leg"])
+        if payload.get("leg_note"):
+            lines.append(payload["leg_note"])
+        if payload.get("files"):
+            lines.append("")
+            lines.append("Download:" if any(f.get("url") for f in payload["files"]) else "Files:")
+            lines.extend(_file_lines(payload["files"]))
+            if payload.get("links_note"):
+                lines.append(payload["links_note"])
+        lines.append("")
         if payload.get("format") == "text":
+            lines.append("## Preview" if payload.get("files") else "## Text")
             lines.append("")
             lines.append(payload.get("text", ""))
             if payload.get("truncated_note"):
                 lines.append("")
                 lines.append(payload["truncated_note"])
+            elif payload.get("final_note"):
+                lines.append("")
+                lines.append(payload["final_note"])
         elif payload.get("format") == "table":
+            if payload.get("sheet"):
+                lines.append("Sheet: %s" % payload["sheet"])
             lines.append(_md_table(payload))
         elif payload.get("format") == "summary":
-            lines.append("")
             lines.append(json.dumps(payload.get("summary"), indent=2, default=str))
         if payload.get("workpaper"):
             lines.append("")
             lines.append("## Statement workpaper")
             lines.append(_md_table(payload["workpaper"]))
+        if payload.get("answer_key_summary"):
+            lines.append("")
+            lines.append("## Answer-key summary")
+            lines.append(json.dumps(payload["answer_key_summary"], indent=2, default=str))
     if payload.get("open_in_app"):
         lines.append("")
         lines.append("Open the whole package in the app: %s" % payload["open_in_app"])

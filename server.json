@@ -3,7 +3,7 @@
   "name": "io.github.syntheticcfo/syntheticcfo",
   "title": "synthetic cfo",
   "description": "Generate synthetic SAP and Oracle ERP datasets with a ground-truth fraud answer key.",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "websiteUrl": "https://syntheticcfo.com",
   "repository": {
     "url": "https://github.com/syntheticcfo/syntheticcfo",

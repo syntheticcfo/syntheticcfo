@@ -16,7 +16,7 @@ the hosted connector reads one of the signed-in account's own jobs (job_id).
 
 SERVER_NAME = "synthetic-cfo"
 SERVER_TITLE = "synthetic cfo"
-SERVER_VERSION = "1.2.0"
+SERVER_VERSION = "1.3.0"
 WEBSITE_URL = "https://syntheticcfo.com"
 ICON_BASE = "https://app.syntheticcfo.com/static/"
 ICONS = [{"src": ICON_BASE + "icon-%d.png" % s, "mimeType": "image/png", "sizes": ["%dx%d" % (s, s)]}
@@ -99,7 +99,8 @@ _GEN_PROPS = {
 # the documents get_deliverable reads (mcp_server/tools.py DELIVERABLE_KINDS,
 # kept equal by tools/connector_tests.py)
 DELIVERABLE_KINDS = ("list", "brief", "audit_report", "answer_key_summary", "financial_statements",
-                     "control_results", "tax_filing", "realism_report", "manifest", "certificate", "workbook")
+                     "control_results", "tax_filing", "realism_report", "manifest", "certificate", "workbook",
+                     "archive_brief")
 
 # ---- what the read tools take to name a package ----
 _PACKAGE_DIR = {"type": "string", "description": "The package_dir returned by generate_dataset."}
@@ -252,13 +253,18 @@ def tool_definitions(remote=False):
         {
             "name": "get_deliverable",
             "title": "Read a deliverable",
-            "description": ("Return one of a generated package's documents for reading in the chat: the executive "
-                            "brief (the whitepaper with the reproducibility certificate), the forensic audit report, "
-                            "the financial statements with their workpaper, the control results, the answer-key "
-                            "summary, the tax filing, the realism report, a module manifest, or one sheet of a "
-                            "source workbook. PDFs come back as their text and tables as rows, capped to a chat-sized "
-                            "part with an offset for the rest. kind 'list' (the default) names the documents this "
-                            "package holds."),
+            "description": ("Return one of a generated package's documents: the executive brief (the whitepaper "
+                            "with the reproducibility certificate), the forensic audit report, the financial "
+                            "statements with their workpaper, the control results, the answer-key summary, the tax "
+                            "filing, the realism report, a module manifest, one sheet of a source workbook, or a "
+                            "multi-leg archive's brief. The reply names the real files (PDF, XLSX, CSV or text) "
+                            "with their type and size; on the hosted connector each comes with a download link "
+                            "that lasts one hour and works only for the account's own dataset. It also carries a "
+                            "short preview: a PDF's text, cut at a paragraph or sentence with an offset for the "
+                            "next part, or a table's first rows. kind 'list' (the default) names every document "
+                            "this package holds, with its files. On a multi-leg package with no leg named, the "
+                            "certificate and the answer key are the archive's, and other documents come from the "
+                            "last leg, which the reply names."),
             "inputSchema": {"type": "object", "properties": {
                 key: key_schema,
                 "kind": {"type": "string", "enum": list(DELIVERABLE_KINDS),
@@ -273,12 +279,17 @@ def tool_definitions(remote=False):
                            "description": ("Where to start: a row for a table, a character for text "
                                            "(from next_offset).")},
                 "leg": dict(_LEG, description=_LEG["description"] + (
-                    " Most documents of a multi-leg package sit in each leg."))},
+                    " Most documents of a multi-leg package sit in each leg; with none named, the last leg."))},
                 "required": [key], "additionalProperties": False},
             "outputSchema": _out({"kind": {"type": "string"}, "title": {"type": "string"},
-                                  "format": {"type": "string"}, "text": {"type": "string"},
-                                  "columns": {"type": "array"}, "rows": {"type": "array"},
+                                  "format": {"type": "string"}, "leg": {"type": "string"},
+                                  "files": {"type": "array", "items": {"type": "object", "properties": {
+                                      "name": {"type": "string"}, "path": {"type": "string"},
+                                      "type": {"type": "string"}, "size_bytes": {"type": "integer"},
+                                      "url": {"type": "string"}, "expires_at": {"type": "string"}}}},
+                                  "next_offset": {"type": "integer"},
                                   "documents": {"type": "array", "items": {"type": "object"}},
+                                  "available": {"type": "array", "items": {"type": "object"}},
                                   "open_in_app": {"type": "string"}}),
             "annotations": _hints(True, True),
         },

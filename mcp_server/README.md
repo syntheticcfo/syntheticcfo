@@ -141,15 +141,23 @@ not just eyeball the data.
   it is a new generation under your plan, with the same hashes as the earlier
   run's on the same engine version.
 
-- **get_deliverable** - read one of the package's documents in the chat: the
-  executive brief (the whitepaper with the reproducibility certificate), the
-  forensic audit report, the financial statements with their workpaper, the
-  control results, the answer-key summary, the tax filing, the realism report,
-  a module manifest, or one sheet of a source workbook. PDFs come back as their
-  text (20,000 characters at a time, with an offset for the next part) and
-  tables as rows (50 by default, 200 at most). `kind` "list", the default,
-  names the documents the package holds. Reading a PDF's text needs the
-  `pypdf` package (`pip install pypdf`); the hosted connector has it.
+- **get_deliverable** - one of the package's documents: the executive brief
+  (the whitepaper with the reproducibility certificate), the forensic audit
+  report, the financial statements with their workpaper, the control results,
+  the answer-key summary, the tax filing, the realism report, a module
+  manifest, one sheet of a source workbook, or a multi-leg archive's brief.
+  The answer names the real files behind it (PDF, XLSX, CSV or text, with
+  type and size): on this stdio server as their full paths on your machine,
+  on the hosted connector each with a download link that lasts one hour and
+  opens only the account's own dataset. It also carries a short preview: a
+  PDF's text (at most 20,000 characters, cut at a paragraph or sentence, with
+  `next_offset` for the next part) or a table's rows (50 by default, 200 at
+  most). The preview is in the text content only; the structured result
+  carries everything else (title, paging, files). `kind` "list", the default,
+  names every document with its files. On a multi-leg package with no `leg`,
+  the certificate and the answer key are the archive's, and other documents
+  come from the last leg, which the answer names. Reading a PDF's text needs
+  the `pypdf` package (`pip install pypdf`); the hosted connector has it.
 
 ## Package shapes
 

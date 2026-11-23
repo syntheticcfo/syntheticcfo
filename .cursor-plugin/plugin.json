@@ -1,7 +1,7 @@
 {
   "name": "synthetic-cfo",
   "displayName": "synthetic cfo",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Generate synthetic SAP and Oracle ERP datasets with a ground-truth fraud answer key.",
   "author": {
     "name": "synthetic cfo",

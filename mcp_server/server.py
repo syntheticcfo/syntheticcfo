@@ -50,6 +50,17 @@ _DISPATCH = {
 }
 
 
+def _local_paths(payload, pkg):
+    """On this machine the package is local, so each file a deliverable names
+    is given as its full path (the hosted connector gives a download link)."""
+    groups = [payload.get("files")] + [d.get("files") for d in payload.get("documents") or []
+                                       if isinstance(d, dict)]
+    for files in groups:
+        for f in files or []:
+            if isinstance(f, dict) and f.get("path") and pkg:
+                f["local_path"] = os.path.join(pkg, *f["path"].split("/"))
+
+
 def _icons():
     try:
         return [T.Icon(**i) for i in catalog.ICONS]
@@ -80,11 +91,16 @@ def build_server():
         if not isinstance(payload, dict):
             payload = {"ok": True, "result": payload}
         payload = json.loads(json.dumps(payload, default=str))
-        content = [T.TextContent(type="text", text=json.dumps(payload, indent=2))]
-        if name == "get_deliverable" and payload.get("ok"):
-            # the document as a person reads it first, the JSON after it
-            content.insert(0, T.TextContent(type="text", text=tools.deliverable_text(payload)))
-        return T.CallToolResult(content=content, structuredContent=payload,
+        structured = payload
+        if name == "get_deliverable":
+            # the document's words once, in the readable block; the structured
+            # result carries the rest (title, paging, the files on disk)
+            _local_paths(payload, (arguments or {}).get("package_dir") or "")
+            content = [T.TextContent(type="text", text=tools.deliverable_text(payload))]
+            structured = tools.deliverable_meta(payload)
+        else:
+            content = [T.TextContent(type="text", text=json.dumps(payload, indent=2))]
+        return T.CallToolResult(content=content, structuredContent=structured,
                                 isError=payload.get("ok") is False)
 
     return server
