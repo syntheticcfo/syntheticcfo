@@ -15,6 +15,39 @@ group) on the Team plan and above. The worked proof, three detectors scored
 against the answer key, is at
 [app.syntheticcfo.com/proof](https://app.syntheticcfo.com/proof)
 
+## Hosted connector (no install)
+
+The same six tools run on the platform itself at
+
+```
+https://app.syntheticcfo.com/mcp
+```
+
+over Streamable HTTP. A client signs in with your synthetic cfo account
+(OAuth: a synthetic cfo page asks you to sign in and to allow the app), or
+sends an API key as `Authorization: Bearer scfo_...`. Your plan's limits
+apply as in the app. Connected apps are listed, and can be disconnected,
+under Account in the app.
+
+- Claude (claude.ai and Claude Desktop): Settings, Connectors, Add custom
+  connector, then paste the address.
+- Claude Code: `claude mcp add --transport http synthetic-cfo https://app.syntheticcfo.com/mcp`,
+  then `/mcp` to sign in.
+- Cursor: add `{"mcpServers": {"synthetic-cfo": {"url": "https://app.syntheticcfo.com/mcp"}}}`
+  to `~/.cursor/mcp.json`, or use the Add to Cursor link on the connect page.
+- ChatGPT, Grok, VS Code and other clients: add a remote MCP server with the
+  address above and sign in when asked.
+
+On the hosted connector the read tools (`inspect_package`,
+`query_answer_key`, `read_table`) take the `job_id` of one of your datasets
+instead of a folder, and `generate_dataset` returns the job id, a summary and
+a download link. Step by step: https://app.syntheticcfo.com/connect
+
+## Run it on your machine (stdio)
+
+The rest of this page sets up the same tools as a local server that your
+client launches.
+
 ## Run it in a container
 
 The Dockerfile at the root of this repository builds the server and starts it
@@ -35,7 +68,7 @@ nothing but the `mcp` package and the Python client. Take it from this
 repository, or as a zip from https://app.syntheticcfo.com/sdk/mcp_server.zip
 (the zip carries the client inside), then:
 
-1. `pip install "mcp>=1.2,<2" syntheticcfo` (Python 3.10 or newer; the server
+1. `pip install "mcp>=1.21,<2" syntheticcfo` (Python 3.10 or newer; the server
    is built on the 1.x line of the `mcp` package and does not start on 2.x).
 2. Create an API key in the app (menu, your email, Account, API access; a free
    account works: https://app.syntheticcfo.com/?signup=1) and set

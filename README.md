@@ -154,8 +154,15 @@ roll-forward separates (https://app.syntheticcfo.com/proof).
 
 ## MCP server
 
-`mcp_server/` lets Claude, Cursor, VS Code or any MCP client generate datasets,
-download packages and read answer keys in plain language. Three-step setup in
+The quickest way in is the hosted connector: add
+`https://app.syntheticcfo.com/mcp` as a remote MCP server in Claude, ChatGPT,
+Cursor or any MCP client and sign in with your synthetic cfo account, with no
+install (Claude Code: `claude mcp add --transport http synthetic-cfo https://app.syntheticcfo.com/mcp`).
+Setup for each client: https://app.syntheticcfo.com/connect
+
+`mcp_server/` runs the same tools on your own machine over stdio: Claude,
+Cursor, VS Code or any MCP client can generate datasets, download packages and
+read answer keys in plain language. Three-step setup in
 [mcp_server/README.md](mcp_server/README.md).
 
 It generates data in the shape of SAP ECC, SAP S/4HANA and Oracle Cloud

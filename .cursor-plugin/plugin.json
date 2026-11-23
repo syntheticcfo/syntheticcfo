@@ -1,0 +1,29 @@
+{
+  "name": "synthetic-cfo",
+  "displayName": "synthetic cfo",
+  "version": "1.1.0",
+  "description": "Generate synthetic SAP and Oracle ERP datasets with a ground-truth fraud answer key.",
+  "author": {
+    "name": "synthetic cfo",
+    "email": "info@syntheticcfo.com",
+    "url": "https://syntheticcfo.com"
+  },
+  "homepage": "https://app.syntheticcfo.com/connect",
+  "repository": "https://github.com/syntheticcfo/syntheticcfo",
+  "license": "MIT",
+  "logo": "assets/logo.png",
+  "keywords": [
+    "erp",
+    "sap",
+    "oracle",
+    "synthetic-data",
+    "fraud-detection",
+    "audit",
+    "mcp"
+  ],
+  "mcpServers": {
+    "synthetic-cfo": {
+      "url": "https://app.syntheticcfo.com/mcp"
+    }
+  }
+}

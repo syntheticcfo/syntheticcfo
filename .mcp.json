@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "synthetic-cfo": {
+      "type": "http",
+      "url": "https://app.syntheticcfo.com/mcp"
+    }
+  }
+}

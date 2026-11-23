@@ -1,0 +1,48 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.syntheticcfo/syntheticcfo",
+  "title": "synthetic cfo",
+  "description": "Generate synthetic SAP and Oracle ERP datasets with a ground-truth fraud answer key.",
+  "version": "1.1.0",
+  "websiteUrl": "https://syntheticcfo.com",
+  "repository": {
+    "url": "https://github.com/syntheticcfo/syntheticcfo",
+    "source": "github"
+  },
+  "icons": [
+    {
+      "src": "https://app.syntheticcfo.com/static/icon-48.png",
+      "mimeType": "image/png",
+      "sizes": [
+        "48x48"
+      ]
+    },
+    {
+      "src": "https://app.syntheticcfo.com/static/icon-128.png",
+      "mimeType": "image/png",
+      "sizes": [
+        "128x128"
+      ]
+    },
+    {
+      "src": "https://app.syntheticcfo.com/static/icon-256.png",
+      "mimeType": "image/png",
+      "sizes": [
+        "256x256"
+      ]
+    },
+    {
+      "src": "https://app.syntheticcfo.com/static/icon-512.png",
+      "mimeType": "image/png",
+      "sizes": [
+        "512x512"
+      ]
+    }
+  ],
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://app.syntheticcfo.com/mcp"
+    }
+  ]
+}

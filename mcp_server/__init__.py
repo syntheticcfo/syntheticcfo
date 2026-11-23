@@ -13,6 +13,15 @@ another engine version they can build a different one). No language model ever
 generates the financial data; the agent only issues a request and the engine
 executes it.
 """
-from .server import build_server, main
-
 __all__ = ["build_server", "main"]
+
+
+def __getattr__(name):
+    # The stdio transport (server.py) needs the mcp package; the tool catalog
+    # (catalog.py) and the tools (tools.py) do not. The hosted connector in the
+    # app imports those two, and the app's image carries no mcp package, so the
+    # transport loads only when something asks for it.
+    if name in ("build_server", "main"):
+        from . import server
+        return getattr(server, name)
+    raise AttributeError("module 'mcp_server' has no attribute %r" % name)

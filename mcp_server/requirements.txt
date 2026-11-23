@@ -1,4 +1,7 @@
 # synthetic cfo MCP server (stdio): the Model Context Protocol transport. Hosted
-# mode needs only this and the client (pip install syntheticcfo); the server
-# does not start on mcp 2.x.
-mcp>=1.2,<2
+# mode needs only this and the client (pip install syntheticcfo). 1.21 is the
+# first 1.x release that runs on current pydantic and carries what the server
+# sends (tool titles, annotations and output schemas, structured results, the
+# server's website and icons); the server does not start on mcp 2.x. No install
+# is needed for the hosted connector at https://app.syntheticcfo.com/mcp.
+mcp>=1.21,<2

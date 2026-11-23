@@ -30,7 +30,23 @@ import glob
 import json
 import sqlite3
 import tempfile
+import contextvars
 from collections import Counter
+
+# Set by the hosted connector (connector/tools_remote.py) around every call it
+# makes into these functions on the platform's own copy of a package: there
+# the job folder holds the facts record and the blind track's sealed sidecar,
+# so _sealed_key withholds the sealed plants' count, which the downloaded
+# package never states either, and the databases open read-only.
+SERVER_SIDE = contextvars.ContextVar("scfo_mcp_server_side", default=False)
+
+
+def _connect(db):
+    """A database of a package: read-only on the platform's own copy."""
+    if SERVER_SIDE.get():
+        from urllib.parse import quote
+        return sqlite3.connect("file:%s?mode=ro" % quote(os.path.abspath(db)), uri=True)
+    return sqlite3.connect(db)
 
 # The engine is imported lazily inside the functions so that `import mcp_server`
 # is cheap and the heavy scientific stack only loads when a tool actually runs.
@@ -475,7 +491,7 @@ def _find_db(pkg):
 
 
 def _db_counts(db):
-    con = sqlite3.connect(db)
+    con = _connect(db)
     try:
         tables = [r[0] for r in con.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")]
@@ -685,6 +701,8 @@ def _sealed_key(pkg, leg=None):
         on = _certified_blind(pkg)
     if not on:
         return None
+    if SERVER_SIDE.get():
+        rows, per_leg = None, {}
     n = ("%s " % format(rows, ",")) if rows is not None else ""
     out = {
         "exists": True,
@@ -855,7 +873,7 @@ def read_table(package_dir, table, limit=50, where=None, leg=None):
         db = _find_db(pkg)
     if not db:
         return {"ok": False, "error": "no database found in this package"}
-    con = sqlite3.connect(db)
+    con = _connect(db)
     con.row_factory = sqlite3.Row
     valid = {r[0] for r in con.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")}
@@ -923,26 +941,33 @@ def reproduce(config=None, seed=None, job_id=None):
         res = generate_dataset(params)
     if not res.get("ok"):
         return res
-    # surface the reproducibility certificate hash lines: a single world's own
-    # certificate, else the archive-level certificate a multi-leg package writes
-    # at its root (engine.layout.archive_certificate), which digests the
-    # archive-level artifacts and every leg certificate
     pkg = res["package_dir"]
+    res.update(certificate_summary(pkg))
+    return res
+
+
+def certificate_summary(pkg):
+    """The reproducibility certificate of a package in a few fields: where it
+    is, the engine version it names and its first SHA-256 file hash lines.
+    A single world's own certificate, else the archive-level certificate a
+    multi-leg package writes at its root (engine.layout.archive_certificate),
+    which digests the archive-level artifacts and every leg certificate."""
+    import re
+    out = {}
     cert = glob.glob(os.path.join(pkg, "00_Executive_Brief", "Reproducibility_Certificate.txt"))
     cert_path = cert[0] if cert else _layout().archive_certificate(pkg)
     cert_hashes = None
     if cert_path:
-        import re
         txt = open(cert_path, encoding="utf-8").read()
         cert_hashes = [ln.strip() for ln in txt.splitlines()
                        if len(ln.strip().split()) == 2 and len(ln.strip().split()[0]) == 64]
         m = re.search(r"^Engine version\s*:\s*(\S+)", txt, re.M)
         if m:
-            res["engine_version"] = m.group(1)
-    res["reproducibility_certificate"] = _rel(cert_path, pkg) if cert_path else None
-    res["file_hashes"] = cert_hashes[:12] if cert_hashes else None
-    res["note"] = ("On the engine version named here (engine_version), the same seed and configuration "
+            out["engine_version"] = m.group(1)
+    out["reproducibility_certificate"] = _rel(cert_path, pkg) if cert_path else None
+    out["file_hashes"] = cert_hashes[:12] if cert_hashes else None
+    out["note"] = ("On the engine version named here (engine_version), the same seed and configuration "
                    "give these same hashes: compare them with an earlier run's certificate, which names "
                    "its own engine. On another engine version the same seed can build a different "
                    "dataset.")
-    return res
+    return out
