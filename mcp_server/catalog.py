@@ -16,7 +16,7 @@ the hosted connector reads one of the signed-in account's own jobs (job_id).
 
 SERVER_NAME = "synthetic-cfo"
 SERVER_TITLE = "synthetic cfo"
-SERVER_VERSION = "1.1.0"
+SERVER_VERSION = "1.2.0"
 WEBSITE_URL = "https://syntheticcfo.com"
 ICON_BASE = "https://app.syntheticcfo.com/static/"
 ICONS = [{"src": ICON_BASE + "icon-%d.png" % s, "mimeType": "image/png", "sizes": ["%dx%d" % (s, s)]}
@@ -96,6 +96,11 @@ _GEN_PROPS = {
 }
 
 
+# the documents get_deliverable reads (mcp_server/tools.py DELIVERABLE_KINDS,
+# kept equal by tools/connector_tests.py)
+DELIVERABLE_KINDS = ("list", "brief", "audit_report", "answer_key_summary", "financial_statements",
+                     "control_results", "tax_filing", "realism_report", "manifest", "certificate", "workbook")
+
 # ---- what the read tools take to name a package ----
 _PACKAGE_DIR = {"type": "string", "description": "The package_dir returned by generate_dataset."}
 _JOB_ID = {"type": "string",
@@ -132,8 +137,9 @@ def tool_definitions(remote=False):
     description, inputSchema, outputSchema, annotations). remote=True gives
     the hosted connector's form."""
     key, key_schema = _target(remote)
-    where_files = ("a link to download the package (sign in to app.syntheticcfo.com in the browser to "
-                   "use it)" if remote else "the folder the package was extracted to")
+    where_files = ("a link that opens the dataset in the app, where it can be downloaded (a signed-out "
+                   "visitor signs in first and comes back to it)" if remote
+                   else "the folder the package was extracted to")
     gen_desc = (
         "Generate a synthetic ERP dataset from accounting rules alone (no real company data; no language "
         "model generates any financial value). The package has four layers: an executive brief, audit "
@@ -242,6 +248,39 @@ def tool_definitions(remote=False):
                                   "engine_version": {"type": "string"},
                                   "file_hashes": {"type": ["array", "null"]}}),
             "annotations": _hints(False, False),
+        },
+        {
+            "name": "get_deliverable",
+            "title": "Read a deliverable",
+            "description": ("Return one of a generated package's documents for reading in the chat: the executive "
+                            "brief (the whitepaper with the reproducibility certificate), the forensic audit report, "
+                            "the financial statements with their workpaper, the control results, the answer-key "
+                            "summary, the tax filing, the realism report, a module manifest, or one sheet of a "
+                            "source workbook. PDFs come back as their text and tables as rows, capped to a chat-sized "
+                            "part with an offset for the rest. kind 'list' (the default) names the documents this "
+                            "package holds."),
+            "inputSchema": {"type": "object", "properties": {
+                key: key_schema,
+                "kind": {"type": "string", "enum": list(DELIVERABLE_KINDS),
+                         "description": "Which document. Default list."},
+                "workbook": {"type": "string",
+                             "description": "For kind workbook: the file name, as kind list names it."},
+                "sheet": {"type": "string", "description": "For kind workbook: the sheet name."},
+                "module": {"type": "string", "description": "For kind manifest: the module, e.g. P2P."},
+                "limit": {"type": "integer",
+                          "description": "Rows of a table (default 50, max 200)."},
+                "offset": {"type": "integer",
+                           "description": ("Where to start: a row for a table, a character for text "
+                                           "(from next_offset).")},
+                "leg": dict(_LEG, description=_LEG["description"] + (
+                    " Most documents of a multi-leg package sit in each leg."))},
+                "required": [key], "additionalProperties": False},
+            "outputSchema": _out({"kind": {"type": "string"}, "title": {"type": "string"},
+                                  "format": {"type": "string"}, "text": {"type": "string"},
+                                  "columns": {"type": "array"}, "rows": {"type": "array"},
+                                  "documents": {"type": "array", "items": {"type": "object"}},
+                                  "open_in_app": {"type": "string"}}),
+            "annotations": _hints(True, True),
         },
     ]
     for d in defs:

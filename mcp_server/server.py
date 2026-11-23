@@ -44,6 +44,9 @@ _DISPATCH = {
     "read_table": lambda a: tools.read_table(
         a.get("package_dir"), a.get("table"), a.get("limit", 50), a.get("where"), a.get("leg")),
     "reproduce": lambda a: tools.reproduce(a.get("config"), a.get("seed"), a.get("job_id")),
+    "get_deliverable": lambda a: tools.get_deliverable(
+        a.get("package_dir"), a.get("kind"), a.get("workbook"), a.get("sheet"), a.get("module"),
+        a.get("limit"), a.get("offset"), a.get("leg")),
 }
 
 
@@ -77,9 +80,12 @@ def build_server():
         if not isinstance(payload, dict):
             payload = {"ok": True, "result": payload}
         payload = json.loads(json.dumps(payload, default=str))
-        return T.CallToolResult(
-            content=[T.TextContent(type="text", text=json.dumps(payload, indent=2))],
-            structuredContent=payload, isError=payload.get("ok") is False)
+        content = [T.TextContent(type="text", text=json.dumps(payload, indent=2))]
+        if name == "get_deliverable" and payload.get("ok"):
+            # the document as a person reads it first, the JSON after it
+            content.insert(0, T.TextContent(type="text", text=tools.deliverable_text(payload)))
+        return T.CallToolResult(content=content, structuredContent=payload,
+                                isError=payload.get("ok") is False)
 
     return server
 

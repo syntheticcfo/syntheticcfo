@@ -971,3 +971,371 @@ def certificate_summary(pkg):
                    "its own engine. On another engine version the same seed can build a different "
                    "dataset.")
     return out
+
+
+# ---------------------------------------------------------------------------
+# get_deliverable  (the documents a person reads, in the chat)
+# ---------------------------------------------------------------------------
+# The read tools above serve an analyst (tables, the answer key's rows); this one
+# serves a person who wants to read what the package says: the executive brief,
+# the forensic audit report, the financial statements, the control results, one
+# sheet of a source workbook. Everything is read from files the package already
+# holds, at request time, and nothing is written; a PDF is returned as its
+# extracted text, never as bytes. Only the package's standard folders are read,
+# and only files a listing of them names, so neither the sealed key
+# (job_dir/_sealed/) nor the facts sidecar is ever reachable from here.
+TEXT_CAP = 20000          # characters of text per answer; ask with offset for more
+TABLE_DEFAULT = 50
+TABLE_MAX = 200
+CELL_CAP = 500            # characters per table cell
+
+_BRIEF = "00_Executive_Brief"
+_EVIDENCE = "01_Audit_Evidence"
+_SOURCE = "03_Source_Data"
+
+# kind -> (title, folder, file name), for the documents that are one file each
+_DELIVERABLE_FILES = {
+    "brief": ("Executive brief (the whitepaper, with the reproducibility certificate)", _BRIEF, "Whitepaper.pdf"),
+    "certificate": ("Reproducibility certificate", _BRIEF, "Reproducibility_Certificate.txt"),
+    "financial_statements": ("Financial statements (P&L, balance sheet, cash flow)", _BRIEF,
+                             "Financial_Statements.pdf"),
+    "audit_report": ("Forensic audit report", _EVIDENCE, "Forensic_Audit_Report.pdf"),
+    "realism_report": ("Statistical realism report", _EVIDENCE, "Statistical_Realism_Report.pdf"),
+    "control_results": ("Control results (the SOX control matrix)", _EVIDENCE, "SOX_Control_Matrix.csv"),
+    "tax_filing": ("Tax filing summary, by period", _EVIDENCE, "Tax_Filing_Summary.csv"),
+}
+DELIVERABLE_KINDS = ("list", "brief", "audit_report", "answer_key_summary", "financial_statements",
+                     "control_results", "tax_filing", "realism_report", "manifest", "certificate", "workbook")
+
+
+def _dv_err(msg, **extra):
+    out = {"ok": False, "error": msg}
+    out.update(extra)
+    return out
+
+
+def _pdf_text(path):
+    """The text of a PDF the package ships, page by page, or (None, why)."""
+    try:
+        from pypdf import PdfReader
+    except Exception:
+        PdfReader = None
+    pages = []
+    if PdfReader is not None:
+        try:
+            for i, page in enumerate(PdfReader(path).pages, 1):
+                pages.append("[page %d]\n%s" % (i, (page.extract_text() or "").strip()))
+        except Exception as e:
+            return None, "the PDF could not be read (%s)" % e.__class__.__name__
+    else:
+        try:
+            import fitz
+        except Exception:
+            return None, ("reading a PDF's text needs the pypdf package (pip install pypdf); the file itself "
+                          "is in the package")
+        try:
+            with fitz.open(path) as doc:
+                for i, page in enumerate(doc, 1):
+                    pages.append("[page %d]\n%s" % (i, (page.get_text() or "").strip()))
+        except Exception as e:
+            return None, "the PDF could not be read (%s)" % e.__class__.__name__
+    text = "\n\n".join(pages).strip()
+    if not text.replace("[page", "").strip(" ]0123456789\n"):
+        return None, "this PDF has no extractable text"
+    return text, None
+
+
+def _cap_text(text, offset):
+    try:
+        offset = max(0, int(offset or 0))
+    except (TypeError, ValueError):
+        offset = 0
+    total = len(text)
+    chunk = text[offset:offset + TEXT_CAP]
+    out = {"format": "text", "text": chunk, "total_chars": total, "offset": offset,
+           "returned_chars": len(chunk), "truncated": offset + len(chunk) < total}
+    if out["truncated"]:
+        out["next_offset"] = offset + len(chunk)
+        out["truncated_note"] = ("Truncated at %d characters: ask again with offset %d for the next part, or "
+                                 "open the package." % (TEXT_CAP, offset + len(chunk)))
+    return out
+
+
+def _cell(v):
+    if v is None:
+        return None
+    if isinstance(v, (int, float, bool)):
+        return v
+    if hasattr(v, "isoformat"):
+        return v.isoformat()
+    s = str(v)
+    return s if len(s) <= CELL_CAP else s[:CELL_CAP] + "..."
+
+
+def _limits(limit, offset):
+    try:
+        lim = int(limit) if limit is not None else TABLE_DEFAULT
+    except (TypeError, ValueError):
+        lim = TABLE_DEFAULT
+    try:
+        off = max(0, int(offset or 0))
+    except (TypeError, ValueError):
+        off = 0
+    return max(1, min(lim, TABLE_MAX)), off
+
+
+def _table(header, rows_iter, limit, offset):
+    lim, off = _limits(limit, offset)
+    rows, total = [], 0
+    for r in rows_iter:
+        if off <= total < off + lim:
+            rows.append([_cell(v) for v in r])
+        total += 1
+    out = {"format": "table", "columns": [_cell(h) for h in header], "rows": rows,
+           "total_rows": total, "offset": off, "returned": len(rows)}
+    if off + len(rows) < total:
+        out["next_offset"] = off + len(rows)
+    return out
+
+
+def _csv_table(path, limit, offset):
+    with open(path, newline="", encoding="utf-8") as f:
+        rd = csv.reader(f)
+        header = next(rd, [])
+        return _table(header, rd, limit, offset)
+
+
+def _deliverable_dir(pkg, leg):
+    """The folder whose documents are read: a named leg, else the package itself.
+    (dir, None) or (None, error payload)."""
+    if leg:
+        d = _leg_dir(pkg, leg)
+        if not d:
+            return None, _dv_err("unknown leg %r" % leg, available_legs=[l for l, _d in _legs(pkg)])
+        return d, None
+    return pkg, None
+
+
+def _workbooks(d):
+    src = os.path.join(d, _SOURCE)
+    if not os.path.isdir(src):
+        return []
+    return sorted(f for f in os.listdir(src)
+                  if f.lower().endswith((".xlsx", ".csv")) and not f.startswith((".", "~", "_"))
+                  and os.path.isfile(os.path.join(src, f)))
+
+
+def _manifests(d):
+    ev = os.path.join(d, _EVIDENCE)
+    if not os.path.isdir(ev):
+        return []
+    return sorted(f[len("Manifest_"):-len(".pdf")] for f in os.listdir(ev)
+                  if f.startswith("Manifest_") and f.endswith(".pdf"))
+
+
+def _list_deliverables(pkg, d, leg):
+    docs = []
+    for kind, (title, folder, name) in _DELIVERABLE_FILES.items():
+        if os.path.isfile(os.path.join(d, folder, name)):
+            docs.append({"kind": kind, "title": title, "file": "%s/%s" % (folder, name)})
+    if _labels().answer_key_files(d):
+        docs.append({"kind": "answer_key_summary", "title": "Answer-key summary (labelled records by module, "
+                     "control and vector)", "file": "%s/Ground_Truth_Labels.csv" % _EVIDENCE})
+    for m in _manifests(d):
+        docs.append({"kind": "manifest", "module": m, "title": "Module manifest, %s" % m,
+                     "file": "%s/Manifest_%s.pdf" % (_EVIDENCE, m)})
+    for wb in _workbooks(d):
+        entry = {"kind": "workbook", "workbook": wb, "title": "Source workbook %s" % wb,
+                 "file": "%s/%s" % (_SOURCE, wb)}
+        if wb.lower().endswith(".xlsx"):
+            try:
+                from openpyxl import load_workbook
+                w = load_workbook(os.path.join(d, _SOURCE, wb), read_only=True)
+                entry["sheets"] = list(w.sheetnames)
+                w.close()
+            except Exception:
+                pass
+        docs.append(entry)
+    out = {"ok": True, "kind": "list", "documents": docs}
+    legs = [label for label, _d in _legs(pkg)]
+    if legs and not leg:
+        out["legs"] = legs
+        out["legs_note"] = ("This package has legs; most documents sit in each leg. Name one with leg to "
+                            "list and read its documents.")
+    if not docs:
+        out["note"] = "No readable document sits at this level of the package."
+    return out
+
+
+def get_deliverable(package_dir, kind=None, workbook=None, sheet=None, module=None, limit=None,
+                    offset=None, leg=None):
+    """One of the package's documents as text or a table, for reading in the
+    chat. kind 'list' (the default) says which documents this package holds."""
+    pkg = package_dir or ""
+    if not pkg or not os.path.isdir(pkg):
+        return _dv_err("package_dir not found: %r" % package_dir)
+    kind = (kind or "list").strip().lower()
+    if kind not in DELIVERABLE_KINDS:
+        return _dv_err("unknown kind %r" % kind, kinds=list(DELIVERABLE_KINDS))
+    d, err = _deliverable_dir(pkg, leg)
+    if err:
+        return err
+    if kind == "list":
+        return _list_deliverables(pkg, d, leg)
+    base = {"ok": True, "kind": kind}
+    if leg:
+        base["leg"] = str(leg).strip().upper()
+    legs_hint = ({"available_legs": [l for l, _d in _legs(pkg)]} if not leg and _legs(pkg) else {})
+
+    if kind == "answer_key_summary":
+        ak = _answer_key_summary(d)
+        if ak is None:
+            return _dv_err("this package has no answer key here", **legs_hint)
+        base.update({"title": "Answer-key summary", "source": "%s/Ground_Truth_Labels.csv" % _EVIDENCE,
+                     "format": "summary", "summary": ak})
+        sk = _sealed_key(d, None)
+        if sk:
+            base["sealed_key"] = {k: sk[k] for k in ("exists", "held", "scoring") if k in sk}
+        return base
+
+    if kind == "workbook":
+        books = _workbooks(d)
+        if not books:
+            return _dv_err("this package has no source workbooks here", **legs_hint)
+        if not workbook:
+            return _dv_err("name the workbook (one of those listed)", workbooks=books)
+        if workbook not in books:
+            return _dv_err("no such workbook %r" % workbook, workbooks=books)
+        path = os.path.join(d, _SOURCE, workbook)
+        base.update({"title": "Source workbook %s" % workbook, "source": "%s/%s" % (_SOURCE, workbook)})
+        if workbook.lower().endswith(".csv"):
+            base.update(_csv_table(path, limit, offset))
+            return base
+        from openpyxl import load_workbook
+        w = load_workbook(path, read_only=True, data_only=True)
+        try:
+            names = list(w.sheetnames)
+            if not sheet:
+                return _dv_err("name the sheet", workbook=workbook, sheets=names)
+            if sheet not in names:
+                return _dv_err("no such sheet %r in %s" % (sheet, workbook), sheets=names)
+            it = w[sheet].iter_rows(values_only=True)
+            header = next(it, ()) or ()
+            base["sheet"] = sheet
+            base.update(_table(header, it, limit, offset))
+        finally:
+            w.close()
+        return base
+
+    if kind == "manifest":
+        mods = _manifests(d)
+        if not mods:
+            return _dv_err("this package has no module manifests here", **legs_hint)
+        if not module:
+            return _dv_err("name the module", modules=mods)
+        m = str(module).strip().upper()
+        if m not in mods:
+            return _dv_err("no manifest for module %r" % module, modules=mods)
+        rel = "%s/Manifest_%s.pdf" % (_EVIDENCE, m)
+        text, why = _pdf_text(os.path.join(d, rel))
+        if text is None:
+            return _dv_err("%s: %s" % (rel, why))
+        base.update({"title": "Module manifest, %s" % m, "source": rel})
+        base.update(_cap_text(text, offset))
+        return base
+
+    title, folder, name = _DELIVERABLE_FILES[kind]
+    rel = "%s/%s" % (folder, name)
+    path = os.path.join(d, folder, name)
+    if not os.path.isfile(path):
+        what = {"financial_statements": "financial statements", "audit_report": "forensic audit report",
+                "brief": "executive brief", "control_results": "control matrix", "tax_filing": "tax filing",
+                "realism_report": "realism report", "certificate": "reproducibility certificate"}[kind]
+        return _dv_err("this package has no %s here" % what, **legs_hint)
+    base.update({"title": title, "source": rel})
+    if name.endswith(".csv"):
+        base.update(_csv_table(path, limit, offset))
+        if kind == "control_results":
+            base["source_note"] = ("Read from the package's SOX control matrix (one row per control, with its "
+                                   "status and exception count).")
+        return base
+    if name.endswith(".txt"):
+        base.update(_cap_text(open(path, encoding="utf-8").read(), offset))
+        return base
+    text, why = _pdf_text(path)
+    if text is None:
+        return _dv_err("%s: %s" % (rel, why))
+    if kind == "brief":
+        cert = os.path.join(d, _BRIEF, "Reproducibility_Certificate.txt")
+        if os.path.isfile(cert):
+            text += "\n\n[Reproducibility_Certificate.txt]\n" + open(cert, encoding="utf-8").read()
+            base["sources"] = [rel, "%s/Reproducibility_Certificate.txt" % _BRIEF]
+    base.update(_cap_text(text, offset))
+    if kind == "audit_report":
+        ak = _answer_key_summary(d)
+        if ak is not None:
+            base["answer_key_summary"] = ak
+    if kind == "financial_statements":
+        wp = os.path.join(d, _EVIDENCE, "Statement_Workpaper.csv")
+        if os.path.isfile(wp):
+            t = _csv_table(wp, limit, None)
+            base["workpaper"] = dict(t, source="%s/Statement_Workpaper.csv" % _EVIDENCE)
+    return base
+
+
+def deliverable_text(payload):
+    """A deliverable as readable text: the document, or a table in Markdown, with
+    its title and source. What a host that shows only text puts on the screen."""
+    if not isinstance(payload, dict):
+        return str(payload)
+    if not payload.get("ok"):
+        return "Could not read the deliverable: %s" % payload.get("error", "")
+    lines = []
+    if payload.get("kind") == "list":
+        lines.append("Documents in this package:")
+        for doc in payload.get("documents") or []:
+            extra = " (workbook=%s)" % doc["workbook"] if doc.get("workbook") else (
+                " (module=%s)" % doc["module"] if doc.get("module") else "")
+            lines.append("- %s: kind=%s%s" % (doc["title"], doc["kind"], extra))
+        if payload.get("legs"):
+            lines.append("Legs: %s. %s" % (", ".join(payload["legs"]), payload.get("legs_note", "")))
+    else:
+        lines.append("# %s" % payload.get("title", payload.get("kind")))
+        if payload.get("source"):
+            lines.append("Source: %s" % payload["source"])
+        if payload.get("format") == "text":
+            lines.append("")
+            lines.append(payload.get("text", ""))
+            if payload.get("truncated_note"):
+                lines.append("")
+                lines.append(payload["truncated_note"])
+        elif payload.get("format") == "table":
+            lines.append(_md_table(payload))
+        elif payload.get("format") == "summary":
+            lines.append("")
+            lines.append(json.dumps(payload.get("summary"), indent=2, default=str))
+        if payload.get("workpaper"):
+            lines.append("")
+            lines.append("## Statement workpaper")
+            lines.append(_md_table(payload["workpaper"]))
+    if payload.get("open_in_app"):
+        lines.append("")
+        lines.append("Open the whole package in the app: %s" % payload["open_in_app"])
+    return "\n".join(lines)
+
+
+def _md_table(t):
+    def esc(v):
+        s = "" if v is None else str(v)
+        s = s.replace("|", "\\|").replace("\n", " ")
+        return s if len(s) <= 60 else s[:57] + "..."
+    cols = t.get("columns") or []
+    out = ["", "| " + " | ".join(esc(c) for c in cols) + " |", "|" + "---|" * len(cols)]
+    for r in t.get("rows") or []:
+        out.append("| " + " | ".join(esc(v) for v in r) + " |")
+    out.append("")
+    out.append("Rows %d to %d of %d." % (t.get("offset", 0) + 1 if t.get("returned") else 0,
+                                         t.get("offset", 0) + t.get("returned", 0), t.get("total_rows", 0)))
+    if t.get("next_offset") is not None:
+        out.append("Ask again with offset %d for more." % t["next_offset"])
+    return "\n".join(out)

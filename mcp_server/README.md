@@ -17,7 +17,7 @@ against the answer key, is at
 
 ## Hosted connector (no install)
 
-The same six tools run on the platform itself at
+The same seven tools run on the platform itself at
 
 ```
 https://app.syntheticcfo.com/mcp
@@ -39,9 +39,11 @@ under Account in the app.
   address above and sign in when asked.
 
 On the hosted connector the read tools (`inspect_package`,
-`query_answer_key`, `read_table`) take the `job_id` of one of your datasets
-instead of a folder, and `generate_dataset` returns the job id, a summary and
-a download link. Step by step: https://app.syntheticcfo.com/connect
+`query_answer_key`, `read_table`, `get_deliverable`) take the `job_id` of one
+of your datasets instead of a folder, and `generate_dataset` returns the job
+id, a summary and a link that opens the dataset in the app (signing you in
+first when needed). Your datasets' documents are also offered as MCP resources,
+`scfo://jobs/<job_id>/<kind>`. Step by step: https://app.syntheticcfo.com/connect
 
 ## Run it on your machine (stdio)
 
@@ -58,7 +60,7 @@ docker build -t syntheticcfo-mcp .
 docker run --rm -i -e SCFO_API_KEY syntheticcfo-mcp
 ```
 
-Set `SCFO_API_KEY` to generate. Without it the server still starts and lists its six tools, and the tools that generate
+Set `SCFO_API_KEY` to generate. Without it the server still starts and lists its seven tools, and the tools that generate
 answer with an error asking for the key.
 
 ## Setup on any plan (three steps)
@@ -85,7 +87,7 @@ repository, or as a zip from https://app.syntheticcfo.com/sdk/mcp_server.zip
   "env": {"SCFO_API_KEY": "scfo_..."}}}}
 ```
 
-Restart the client and the six tools appear. Generation runs on the platform
+Restart the client and the seven tools appear. Generation runs on the platform
 under your plan's limits; each package is downloaded to `SCFO_MCP_OUTPUT_DIR`
 (optional; default: a synthetic_cfo_mcp folder in your temp directory) and the
 tools work on the extracted files. Keep the key set: without it the tools that
@@ -138,6 +140,16 @@ not just eyeball the data.
   the `config` and `seed` from an earlier result's `reproduce` field instead,
   it is a new generation under your plan, with the same hashes as the earlier
   run's on the same engine version.
+
+- **get_deliverable** - read one of the package's documents in the chat: the
+  executive brief (the whitepaper with the reproducibility certificate), the
+  forensic audit report, the financial statements with their workpaper, the
+  control results, the answer-key summary, the tax filing, the realism report,
+  a module manifest, or one sheet of a source workbook. PDFs come back as their
+  text (20,000 characters at a time, with an offset for the next part) and
+  tables as rows (50 by default, 200 at most). `kind` "list", the default,
+  names the documents the package holds. Reading a PDF's text needs the
+  `pypdf` package (`pip install pypdf`); the hosted connector has it.
 
 ## Package shapes
 

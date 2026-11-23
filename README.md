@@ -177,7 +177,7 @@ docker build -t syntheticcfo-mcp .
 docker run --rm -i -e SCFO_API_KEY syntheticcfo-mcp
 ```
 
-Without a key the server still starts and lists its six tools, and the tools
+Without a key the server still starts and lists its seven tools, and the tools
 that generate answer with an error asking for `SCFO_API_KEY`.
 
 ## Plans
